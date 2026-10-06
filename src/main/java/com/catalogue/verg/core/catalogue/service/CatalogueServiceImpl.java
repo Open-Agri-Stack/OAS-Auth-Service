@@ -4,6 +4,7 @@ import com.catalogue.verg.core.exception.CustomException;
 import com.catalogue.verg.core.util.Constants;
 import com.catalogue.verg.core.util.VergProperties;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +28,9 @@ public class CatalogueServiceImpl implements CatalogueService {
 
     private static final String FIELD_RESULT = "result";
     private static final String FIELD_USER_ID = "userId";
+    /** The catalogue's 403 message for a correct but expired password or PIN ends with this. */
+    private static final String EXPIRED_SUFFIX = "has expired";
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Autowired
     private VergProperties vergProperties;
@@ -65,6 +69,12 @@ public class CatalogueServiceImpl implements CatalogueService {
 
             body = restTemplate.exchange(url, HttpMethod.POST, request, JsonNode.class).getBody();
         } catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden e) {
+            if (expired(e)) {
+                // Only reachable with the right credential, so naming it reveals nothing new.
+                log.warn("CatalogueServiceImpl::{}: credential has expired", operation);
+                throw new CustomException(Constants.AUTH_CREDENTIAL_EXPIRED,
+                        Constants.AUTH_CREDENTIAL_EXPIRED_MSG, HttpStatus.UNAUTHORIZED);
+            }
             // 401 bad credential, 403 non-ACTIVE: collapsed so neither can be told apart.
             log.warn("CatalogueServiceImpl::{}: catalogue rejected the credentials", operation);
             throw new CustomException(Constants.AUTH_INVALID_CREDENTIALS,
@@ -89,6 +99,18 @@ public class CatalogueServiceImpl implements CatalogueService {
             throw unavailable();
         }
         return userId;
+    }
+
+    /** True for the catalogue's 403 "... has expired"; any other rejection stays generic. */
+    private boolean expired(HttpClientErrorException e) {
+        if (e.getStatusCode().value() != HttpStatus.FORBIDDEN.value()) {
+            return false;
+        }
+        try {
+            return MAPPER.readTree(e.getResponseBodyAsString()).path("message").asText("").endsWith(EXPIRED_SUFFIX);
+        } catch (Exception parseFailure) {
+            return false;
+        }
     }
 
     private CustomException unavailable() {

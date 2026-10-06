@@ -305,4 +305,46 @@ class CatalogueServiceImplTest {
             logger.detachAppender(appender);
         }
     }
+
+    // ── credential expiry ──────────────────────────────────────────────────────────────────────
+
+    private static HttpClientErrorException forbidden(String message) {
+        return HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null,
+                ("{\"message\":\"" + message + "\"}").getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    @Test
+    @DisplayName("the catalogue's 403 'Password has expired' becomes AUTH_CREDENTIAL_EXPIRED")
+    void expiredPasswordIsItsOwnError() {
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(JsonNode.class)))
+                .thenThrow(forbidden("Password has expired"));
+
+        assertThatThrownBy(() -> service.verifyCredentials(EMAIL, PASSWORD))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("code", Constants.AUTH_CREDENTIAL_EXPIRED)
+                .hasFieldOrPropertyWithValue("httpStatusCode", HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    @DisplayName("the catalogue's 403 'PIN has expired' becomes AUTH_CREDENTIAL_EXPIRED too")
+    void expiredPinIsItsOwnError() {
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(JsonNode.class)))
+                .thenThrow(forbidden("PIN has expired"));
+
+        assertThatThrownBy(() -> service.verifyPin("user-1", "482913"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("code", Constants.AUTH_CREDENTIAL_EXPIRED);
+    }
+
+    @Test
+    @DisplayName("any other 403 still collapses to AUTH_INVALID_CREDENTIALS")
+    void otherForbiddenStaysGeneric() {
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(JsonNode.class)))
+                .thenThrow(forbidden("User is not active"));
+
+        assertThatThrownBy(() -> service.verifyCredentials(EMAIL, PASSWORD))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("code", Constants.AUTH_INVALID_CREDENTIALS);
+    }
 }

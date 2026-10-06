@@ -197,6 +197,7 @@ Returns the same token response as `auth_token_create`, whatever the flag says.
 | unknown, expired or removed device | `401 AUTH_TOKEN_INVALID`, catalogue not called |
 | wrong PIN, attempts 1–4 | `401 AUTH_INVALID_CREDENTIALS` |
 | wrong PIN, attempt 5 | `401 AUTH_TOKEN_REVOKED`, device removed; log in with a password |
+| right PIN, past its `pinExpiresOn` | `401 AUTH_CREDENTIAL_EXPIRED`, no attempt spent, device kept; set a new PIN |
 | Redis or the catalogue unavailable | `503`, no token, no attempt spent |
 
 Each attempt is counted (atomic `INCR`) before the PIN is checked, so parallel requests cannot share
@@ -292,6 +293,7 @@ deletes; an absent user is `200` with `deleted: false`, so a retried cleanup can
 | `AUTH_TOKEN_EXPIRED` | 401 | past `exp` | refresh |
 | `AUTH_TOKEN_REVOKED` | 401 | denylisted; or a device removed after five wrong PINs | log in with a password |
 | `AUTH_INVALID_CREDENTIALS` | 401 | the catalogue rejected the password or PIN (its 401 or 403) | re-authenticate |
+| `AUTH_CREDENTIAL_EXPIRED` | 401 | right password or PIN, but past its `passwordExpiresOn` / `pinExpiresOn` | set a new one |
 | `AUTH_USER_DISABLED` | 403 | blocked in Keycloak | `auth_user_create` re-enables |
 | `AUTH_USER_NOT_FOUND` | 404 | never provisioned, or a wrong id on revoke/delete/update | publish, or send the userId |
 | `AUTH_USER_CONFLICT` | 409 | another Keycloak user holds that email | change the data |
@@ -327,13 +329,14 @@ POST /user/v1/verify      { "email": "...", "password": "<plaintext>" }
 POST /user/v1/verify_pin  { "userId": "...", "pin": "<plaintext>" }
 
 200  { "result": { "userId": "user-000000000001", "status": "ACTIVE" } }
-401  wrong or unknown credential        403  record not ACTIVE        400  missing field
+401  wrong or unknown credential        403  record not ACTIVE, or "... has expired"        400  missing field
 ```
 
 | Catalogue answers | This service returns |
 |---|---|
 | `200` with `result.userId` | a token for that userId |
 | `401` or `403` | `401 AUTH_INVALID_CREDENTIALS`, collapsed so a blocked account looks like a wrong password |
+| `403` whose message ends in "has expired" | `401 AUTH_CREDENTIAL_EXPIRED` (only reachable with the right credential) |
 | `200` without a `userId`, or a PIN verdict for a different `userId` | `503`, never a token |
 | `400`, `404`, `5xx`, unreachable, unparseable | `503`, fail closed |
 
@@ -358,6 +361,7 @@ POST /user/v1/verify_pin  { "userId": "...", "pin": "<plaintext>" }
 | record deleted | `auth_user_delete` | |
 | login | `auth_token_create` with `{email, password}` | |
 | PIN login | `auth_token_create_pin` | called by the app, not the catalogue |
+| PIN change | catalogue `PUT /user/v1/update/{id}/pin` `{currentPassword, newPin, pinExpiresOn?}` | authorised by the password; a hash is refused |
 
 Nothing in the catalogue talks to Keycloak. This service holds a snapshot taken at publish, so an edit
 reaches tokens only through `auth_user_update`. Call it with a timeout-bounded `RestTemplate`, and never
@@ -473,24 +477,26 @@ The order is:
 
 1. Create User
 2. Read User
-3. Verify Credentials
+3. Verify Credentials, then Verify PIN (both internal catalogue checks; local only)
 4. Create Token, then Create Token (PIN enrolment), Create Token with PIN, and its wrong-PIN variant
-5. Refresh Token
-6. Validate Token
-7. Invalidate Token
-8. Update User
-9. Revoke User
-10. Enable User
-11. Toggle User (the catalogue's toggle; run twice to deactivate, then reactivate)
-12. Delete User
-13. Delete Catalogue Record
+5. Change PIN (then Create Token with PIN works with the new PIN)
+6. Refresh Token
+7. Validate Token
+8. Invalidate Token
+9. Update Catalogue User (syncs to auth; set a past `passwordExpiresOn` or `pinExpiresOn` to see `AUTH_CREDENTIAL_EXPIRED`)
+10. Update User
+11. Revoke User
+12. Enable User
+13. Toggle User (the catalogue's toggle; run twice to deactivate, then reactivate)
+14. Delete User
+15. Delete Catalogue Record
 
 Paste the `PASTE_USER_ID`, `PASTE_ACCESS_TOKEN`, `PASTE_REFRESH_TOKEN` and `PASTE_DEVICE_HANDLE` values
 by hand. Re-running Validate or Create Token between the later steps shows each transition: `401`
 revoked, `403` disabled, `200` again, `404` not provisioned.
 
 Create User only succeeds if the catalogue's call to `auth_user_create` did, so it tests both services.
-Keep the email unique, or it is a `409`. The PIN requests need the catalogue's `verify_pin` and a
+Keep the email unique, or it is a `409`. The PIN requests need a catalogue with `verify_pin` and a
 6-digit PIN.
 
 After any change to revocation, check by hand:
@@ -558,8 +564,9 @@ Each was hit during development, and each symptom misleads.
 ## 13. Not implemented
 
 - **The user catalogue does not validate tokens** (the agri catalogues do, via `auth_token_validate`).
-- **The catalogue does not call `auth_user_update` yet.** Its revoke and delete wiring shipped with its
-  credential-hardening change; the update call and `verify_pin` come with its PIN change.
+- **Credential expiry dates are set by the callers** (the portals); the catalogue only enforces them.
+- **PIN login and update sync need the catalogue's PIN release**, which adds `verify_pin` and makes `update`
+  call `auth_user_update`. Until it is deployed, PIN login returns `503` and edits do not reach tokens.
 - **No caller authentication** on these endpoints: network isolation only.
 - **No RBAC:** `functional_role` is a claim, not a permission.
 - **No MFA**, and none is possible while Keycloak holds no credentials.

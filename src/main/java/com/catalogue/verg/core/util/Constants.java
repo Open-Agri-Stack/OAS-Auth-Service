@@ -35,6 +35,10 @@ public final class Constants {
     public static final String AUTH_INVALID_CREDENTIALS = "AUTH_INVALID_CREDENTIALS";
     public static final String AUTH_INVALID_CREDENTIALS_MSG = "Invalid credentials";
 
+    /** Right password or PIN, but past the expiry date the catalogue holds; set a new one. */
+    public static final String AUTH_CREDENTIAL_EXPIRED = "AUTH_CREDENTIAL_EXPIRED";
+    public static final String AUTH_CREDENTIAL_EXPIRED_MSG = "Credential has expired";
+
     public static final String AUTH_TOKEN_INVALID = "AUTH_TOKEN_INVALID";
     public static final String AUTH_TOKEN_INVALID_MSG = "Token is not valid";
 

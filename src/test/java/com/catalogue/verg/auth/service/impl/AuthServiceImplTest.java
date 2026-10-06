@@ -679,4 +679,21 @@ class AuthServiceImplTest {
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("httpStatusCode", HttpStatus.NOT_FOUND);
     }
+
+    // ── credential expiry ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("an expired PIN returns AUTH_CREDENTIAL_EXPIRED, gives the attempt back and keeps the device")
+    void expiredPinRefundsTheAttempt() {
+        when(keycloakService.claimPinAttempt(HANDLE)).thenReturn(USER_ID);
+        doThrow(new CustomException(Constants.AUTH_CREDENTIAL_EXPIRED,
+                Constants.AUTH_CREDENTIAL_EXPIRED_MSG, HttpStatus.UNAUTHORIZED))
+                .when(catalogueService).verifyPin(USER_ID, "482913");
+
+        assertThatThrownBy(() -> service.authTokenCreatePin(pinRequest("482913")))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("code", Constants.AUTH_CREDENTIAL_EXPIRED);
+        verify(keycloakService).settlePinAttempt(HANDLE, KeycloakService.PinAttempt.UNCHECKED);
+        verify(keycloakService, never()).requestToken(anyString());
+    }
 }
