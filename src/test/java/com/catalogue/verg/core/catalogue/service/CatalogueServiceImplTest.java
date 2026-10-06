@@ -38,17 +38,14 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * The credential check against the deployed catalogue contract: {email, password} in, 2xx +
- * result.userId for success, 401/403 for a rejection. The interesting half is which failures
- * must NOT become a 401.
- */
+/** The credential check against the catalogue contract: which failures must NOT become a 401. */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class CatalogueServiceImplTest {
 
     private static final String BASE_URL = "http://localhost:8082";
     private static final String VERIFY_PATH = "/user/v1/verify";
+    private static final String VERIFY_PIN_PATH = "/user/v1/verify_pin";
     private static final String EMAIL = "asha@example.org";
     private static final String PASSWORD = "Sup3r-S3cret!";
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -62,6 +59,7 @@ class CatalogueServiceImplTest {
         VergProperties props = new VergProperties();
         props.setCatalogueBaseUrl(BASE_URL);
         props.setCatalogueVerifyPath(VERIFY_PATH);
+        props.setCatalogueVerifyPinPath(VERIFY_PIN_PATH);
         ReflectionTestUtils.setField(service, "vergProperties", props);
     }
 
@@ -124,8 +122,7 @@ class CatalogueServiceImplTest {
     @Test
     @DisplayName("a catalogue 403 (not ACTIVE) is also a 401, so the two are indistinguishable")
     void catalogueForbiddenIsAlsoInvalidCredentials() {
-        // The catalogue answers 403 "User is not active", which tells a caller the account exists.
-        // Collapsing it here stops us propagating that.
+        // The catalogue's 403 reveals the account exists; collapsing it stops that leaking.
         when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(JsonNode.class)))
                 .thenThrow(HttpClientErrorException.create(HttpStatus.FORBIDDEN,
                         "User is not active", null, null, null));
@@ -141,8 +138,7 @@ class CatalogueServiceImplTest {
     @Test
     @DisplayName("2xx with no userId is a 503 — never a token for the submitted email")
     void successWithoutUserIdIsUnavailable() {
-        // The tempting fallback — "use the email we were given" — would feed unvalidated caller
-        // input to Keycloak as a username.
+        // Falling back to the submitted email would hand unvalidated input to Keycloak.
         stubResponse("{\"result\":{\"status\":\"ACTIVE\"}}");
 
         assertThatThrownBy(() -> service.verifyCredentials(EMAIL, PASSWORD))
@@ -154,8 +150,7 @@ class CatalogueServiceImplTest {
     @Test
     @DisplayName("a 400 for a malformed request is a 503, not a rejection")
     void badRequestIsUnavailable() {
-        // "Email and password are required" means WE sent the wrong shape — a config or contract
-        // fault, not the user's password being wrong.
+        // A 400 means we sent the wrong shape: a contract fault, not a wrong password.
         when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(JsonNode.class)))
                 .thenThrow(HttpClientErrorException.create(HttpStatus.BAD_REQUEST,
                         "Email and password are required", null, null, null));
@@ -239,5 +234,117 @@ class CatalogueServiceImplTest {
             logger.setLevel(original);
             logger.detachAppender(appender);
         }
+    }
+
+    // ── verifyPin ──────────────────────────────────────────────────────────────────────────────
+
+    private static final String PIN = "482913";
+
+    @Test
+    @DisplayName("verifyPin posts {userId, pin} to base-url + verify-pin-path")
+    void verifyPinPostsToItsOwnPath() {
+        stubResponse("{\"result\":{\"userId\":\"user-1\",\"status\":\"ACTIVE\"}}");
+
+        service.verifyPin("user-1", PIN);
+
+        ArgumentCaptor<HttpEntity> request = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).exchange(eq(BASE_URL + VERIFY_PIN_PATH), eq(HttpMethod.POST),
+                request.capture(), eq(JsonNode.class));
+        @SuppressWarnings("unchecked")
+        Map<String, String> body = (Map<String, String>) request.getValue().getBody();
+        assertThat(body)
+                .containsEntry("userId", "user-1")
+                .containsEntry("pin", PIN)
+                .doesNotContainKey("email");
+    }
+
+    @Test
+    @DisplayName("a wrong PIN is an invalid-credentials 401, the code the five-strike rule counts")
+    void wrongPinIsInvalidCredentials() {
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(JsonNode.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.UNAUTHORIZED,
+                        "Unauthorized", null, null, null));
+
+        assertThatThrownBy(() -> service.verifyPin("user-1", PIN))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("code", Constants.AUTH_INVALID_CREDENTIALS);
+    }
+
+    @Test
+    @DisplayName("a 2xx for a DIFFERENT user is a 503, never a successful PIN")
+    void verifyPinForAnotherUserIsUnavailable() {
+        stubResponse("{\"result\":{\"userId\":\"user-2\",\"status\":\"ACTIVE\"}}");
+
+        assertThatThrownBy(() -> service.verifyPin("user-1", PIN))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("code", Constants.AUTH_UPSTREAM_UNAVAILABLE);
+    }
+
+    @Test
+    @DisplayName("the PIN never appears in a log line")
+    void pinIsNeverLogged() {
+        Logger logger = (Logger) LoggerFactory.getLogger(CatalogueServiceImpl.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        Level original = logger.getLevel();
+        logger.setLevel(Level.ALL);
+        try {
+            when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(JsonNode.class)))
+                    .thenThrow(HttpClientErrorException.create(HttpStatus.BAD_REQUEST,
+                            "bad request: pin=" + PIN, null, null, null));
+
+            assertThatThrownBy(() -> service.verifyPin("user-1", PIN)).isInstanceOf(CustomException.class);
+
+            assertThat(appender.list).isNotEmpty();
+            assertThat(appender.list)
+                    .as("a log line leaked the PIN")
+                    .noneMatch(event -> event.getFormattedMessage().contains(PIN));
+        } finally {
+            logger.setLevel(original);
+            logger.detachAppender(appender);
+        }
+    }
+
+    // ── credential expiry ──────────────────────────────────────────────────────────────────────
+
+    private static HttpClientErrorException forbidden(String message) {
+        return HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null,
+                ("{\"message\":\"" + message + "\"}").getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    @Test
+    @DisplayName("the catalogue's 403 'Password has expired' becomes AUTH_CREDENTIAL_EXPIRED")
+    void expiredPasswordIsItsOwnError() {
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(JsonNode.class)))
+                .thenThrow(forbidden("Password has expired"));
+
+        assertThatThrownBy(() -> service.verifyCredentials(EMAIL, PASSWORD))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("code", Constants.AUTH_CREDENTIAL_EXPIRED)
+                .hasFieldOrPropertyWithValue("httpStatusCode", HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    @DisplayName("the catalogue's 403 'PIN has expired' becomes AUTH_CREDENTIAL_EXPIRED too")
+    void expiredPinIsItsOwnError() {
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(JsonNode.class)))
+                .thenThrow(forbidden("PIN has expired"));
+
+        assertThatThrownBy(() -> service.verifyPin("user-1", "482913"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("code", Constants.AUTH_CREDENTIAL_EXPIRED);
+    }
+
+    @Test
+    @DisplayName("any other 403 still collapses to AUTH_INVALID_CREDENTIALS")
+    void otherForbiddenStaysGeneric() {
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(JsonNode.class)))
+                .thenThrow(forbidden("User is not active"));
+
+        assertThatThrownBy(() -> service.verifyCredentials(EMAIL, PASSWORD))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("code", Constants.AUTH_INVALID_CREDENTIALS);
     }
 }

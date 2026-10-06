@@ -10,12 +10,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * The auth-service API, for service-to-service use. Only {@code auth_token_create} checks a
- * credential (and only while {@code catalogue.validate-enabled} is on); the {@code auth_user_*}
- * endpoints authenticate no caller at all, so they must not be reachable from an ingress —
- * see the README.
- */
+/** Service-to-service API; auth_user_* authenticate no caller, so keep them off any ingress. */
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
@@ -23,8 +18,7 @@ public class AuthController {
     @Autowired
     private AuthService authService;
 
-    /** {email, password} -> tokens, the password verified by the user-catalogue. Falls back to
-     *  {userId} on trust when {@code catalogue.validate-enabled} is off; see AuthServiceImpl. */
+    /** {email, password} -> tokens, verified by the catalogue; {userId} on trust when validation is off. */
     @PostMapping("/v1/auth_token_create")
     public ResponseEntity<CustomResponse> authTokenCreate(@RequestBody JsonNode tokenDetails) {
         CustomResponse response = authService.authTokenCreate(tokenDetails);
@@ -35,6 +29,13 @@ public class AuthController {
     @PostMapping("/v1/auth_token_refresh")
     public ResponseEntity<CustomResponse> authTokenRefresh(@RequestBody JsonNode tokenDetails) {
         CustomResponse response = authService.authTokenRefresh(tokenDetails);
+        return new ResponseEntity<>(response, response.getResponseCode());
+    }
+
+    /** {deviceHandle, pin} -> tokens. The handle comes from auth_token_create with pinLogin. */
+    @PostMapping("/v1/auth_token_create_pin")
+    public ResponseEntity<CustomResponse> authTokenCreatePin(@RequestBody JsonNode tokenDetails) {
+        CustomResponse response = authService.authTokenCreatePin(tokenDetails);
         return new ResponseEntity<>(response, response.getResponseCode());
     }
 
@@ -56,6 +57,13 @@ public class AuthController {
     @PostMapping("/v1/auth_user_create")
     public ResponseEntity<CustomResponse> authUserCreate(@RequestBody JsonNode userDetails) {
         CustomResponse response = authService.authUserCreate(userDetails);
+        return new ResponseEntity<>(response, response.getResponseCode());
+    }
+
+    /** Syncs a catalogue edit into Keycloak. Replaces, never re-enables; 404 if never published. */
+    @PostMapping("/v1/auth_user_update")
+    public ResponseEntity<CustomResponse> authUserUpdate(@RequestBody JsonNode userDetails) {
+        CustomResponse response = authService.authUserUpdate(userDetails);
         return new ResponseEntity<>(response, response.getResponseCode());
     }
 

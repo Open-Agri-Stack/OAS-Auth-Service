@@ -1,11 +1,6 @@
 package com.catalogue.verg.core.util;
 
-/**
- * Request field names and client-facing error codes.
- *
- * <p>Messages are fixed strings, never the underlying exception or Keycloak's error_description:
- * those leak internal hostnames and would let a caller tell "no such user" from "wrong password".
- */
+/** Request fields and error codes; messages are fixed strings so nothing internal or enumerable leaks. */
 public final class Constants {
 
     private Constants() {
@@ -13,9 +8,7 @@ public final class Constants {
 
     public static final String SUCCESS = "success";
 
-    // Request fields, camelCase to match the user catalogue's payload; the claims they become are
-    // snake_case. Only auth_token_create takes a credential, and only when
-    // catalogue.validate-enabled is true. The login identifier is the email.
+    // Request fields: camelCase like the catalogue payload; the claims they become are snake_case.
     public static final String AUTH_FIELD_PASSWORD = "password";
     public static final String AUTH_FIELD_TOKEN = "token";
     public static final String AUTH_FIELD_REFRESH_TOKEN = "refreshToken";
@@ -28,6 +21,12 @@ public final class Constants {
     public static final String AUTH_FIELD_LAST_NAME = "lastName";
     public static final String AUTH_FIELD_ORG_NAME = "orgName";
     public static final String AUTH_FIELD_DISPLAY_NAME = "displayName";
+    // PIN login: the catalogue checks the PIN, and only together with the device handle.
+    public static final String AUTH_FIELD_PIN = "pin";
+    public static final String AUTH_FIELD_PIN_LOGIN = "pinLogin";
+    public static final String AUTH_FIELD_DEVICE_HANDLE = "deviceHandle";
+    public static final String AUTH_FIELD_DEVICE_ID = "deviceId";
+    public static final String AUTH_FIELD_DEVICE_LABEL = "deviceLabel";
 
     public static final String AUTH_INVALID_REQUEST = "AUTH_INVALID_REQUEST";
     public static final String AUTH_INVALID_REQUEST_MSG = "Request is missing a required field";
@@ -35,6 +34,10 @@ public final class Constants {
     /** Deliberately identical for a wrong password, an unknown user and a non-ACTIVE account. */
     public static final String AUTH_INVALID_CREDENTIALS = "AUTH_INVALID_CREDENTIALS";
     public static final String AUTH_INVALID_CREDENTIALS_MSG = "Invalid credentials";
+
+    /** Right password or PIN, but past the expiry date the catalogue holds; set a new one. */
+    public static final String AUTH_CREDENTIAL_EXPIRED = "AUTH_CREDENTIAL_EXPIRED";
+    public static final String AUTH_CREDENTIAL_EXPIRED_MSG = "Credential has expired";
 
     public static final String AUTH_TOKEN_INVALID = "AUTH_TOKEN_INVALID";
     public static final String AUTH_TOKEN_INVALID_MSG = "Token is not valid";

@@ -5,10 +5,7 @@ import lombok.Setter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-/**
- * Application tunables bound from the environment. Client connection settings live in the relevant
- * {@code config} class; this holds the values the service logic reads.
- */
+/** Tunables the service logic reads; client connection settings live in each config class. */
 @Component
 @Getter
 @Setter
@@ -48,4 +45,11 @@ public class VergProperties {
 
     @Value("${catalogue.verify-path}")
     private String catalogueVerifyPath;
+
+    @Value("${catalogue.verify-pin-path}")
+    private String catalogueVerifyPinPath;
+
+    /** Absolute life of a PIN device; after it the user must log in with a password. */
+    @Value("${pin.device-ttl-seconds}")
+    private long pinDeviceTtlSeconds;
 }

@@ -59,7 +59,7 @@
             "PASTE_USER_ID"
           ]
         },
-        "description": "Everything the catalogue stores, including the bcrypt password and pin hashes."
+        "description": "Everything the catalogue stores except the password and pin, which never leave postgres."
       }
     },
     {
@@ -95,6 +95,38 @@
       }
     },
     {
+      "name": "Verify PIN",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "apikey",
+            "value": "{{api_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"PASTE_USER_ID\",\n  \"pin\": \"123456\"\n}"
+        },
+        "url": {
+          "raw": "{{catalogue_url}}/user/v1/verify_pin",
+          "host": [
+            "{{catalogue_url}}"
+          ],
+          "path": [
+            "user",
+            "v1",
+            "verify_pin"
+          ]
+        },
+        "description": "The call auth-service makes internally during PIN login. 401 for a wrong PIN, 403 if not ACTIVE or \"PIN has expired\". No Kong route by design, so it only works against a local catalogue."
+      }
+    },
+    {
       "name": "Create Token",
       "request": {
         "method": "POST",
@@ -123,7 +155,137 @@
             "auth_token_create"
           ]
         },
-        "description": "Login. Copy access_token and refresh_token from the response."
+        "description": "Login. Copy access_token and refresh_token from the response. 401 AUTH_CREDENTIAL_EXPIRED when the password is past its passwordExpiresOn."
+      }
+    },
+    {
+      "name": "Create Token (PIN enrolment)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "apikey",
+            "value": "{{api_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"test.user@example.com\",\n  \"password\": \"test123\",\n  \"pinLogin\": true,\n  \"deviceLabel\": \"Test device\"\n}"
+        },
+        "url": {
+          "raw": "{{auth_url}}/auth/v1/auth_token_create",
+          "host": [
+            "{{auth_url}}"
+          ],
+          "path": [
+            "auth",
+            "v1",
+            "auth_token_create"
+          ]
+        },
+        "description": "Login that also enrols this device for PIN login. Copy deviceHandle from the response."
+      }
+    },
+    {
+      "name": "Create Token with PIN",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "apikey",
+            "value": "{{api_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"deviceHandle\": \"PASTE_DEVICE_HANDLE\",\n  \"pin\": \"123456\"\n}"
+        },
+        "url": {
+          "raw": "{{auth_url}}/auth/v1/auth_token_create_pin",
+          "host": [
+            "{{auth_url}}"
+          ],
+          "path": [
+            "auth",
+            "v1",
+            "auth_token_create_pin"
+          ]
+        },
+        "description": "PIN login with the deviceHandle from Create Token (PIN enrolment). 401 AUTH_CREDENTIAL_EXPIRED when the PIN is past its pinExpiresOn (no attempt spent)."
+      }
+    },
+    {
+      "name": "Create Token with PIN (wrong PIN)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "apikey",
+            "value": "{{api_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"deviceHandle\": \"PASTE_DEVICE_HANDLE\",\n  \"pin\": \"000000\"\n}"
+        },
+        "url": {
+          "raw": "{{auth_url}}/auth/v1/auth_token_create_pin",
+          "host": [
+            "{{auth_url}}"
+          ],
+          "path": [
+            "auth",
+            "v1",
+            "auth_token_create_pin"
+          ]
+        },
+        "description": "A wrong PIN: 401 for attempts 1-4; the fifth returns 401 AUTH_TOKEN_REVOKED and removes the device."
+      }
+    },
+    {
+      "name": "Change PIN",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "apikey",
+            "value": "{{api_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"currentPassword\": \"test123\",\n  \"newPin\": \"135790\"\n}"
+        },
+        "url": {
+          "raw": "{{catalogue_url}}/user/v1/update/PASTE_USER_ID/pin",
+          "host": [
+            "{{catalogue_url}}"
+          ],
+          "path": [
+            "user",
+            "v1",
+            "update",
+            "PASTE_USER_ID",
+            "pin"
+          ]
+        },
+        "description": "Catalogue PIN change, authorised by the current password. newPin must be 6 digits; optional pinExpiresOn sets its expiry. Then Create Token with PIN works with the new PIN on the same device."
       }
     },
     {
@@ -219,7 +381,72 @@
             "auth_token_invalidate"
           ]
         },
-        "description": "Kills this one token and ends its Keycloak session. Validate Token then returns 401 revoked, but a fresh Create Token still works."
+        "description": "Kills this one token and ends its Keycloak session. Validate Token then returns 401 revoked, but a fresh Create Token still works. Logout keeps PIN devices."
+      }
+    },
+    {
+      "name": "Update Catalogue User",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "apikey",
+            "value": "{{api_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"test\",\n  \"lastName\": \"user\",\n  \"email\": \"test.user@example.com\",\n  \"orgId\": \"org-000000000001\",\n  \"orgName\": \"Ethiopian Institute of Agricultural Research\",\n  \"functionalRole\": \"MAKER\",\n  \"displayName\": \"FIELD_OFFICER\",\n  \"dateOfBirth\": \"1994-04-12\",\n  \"gender\": \"MALE\",\n  \"phoneNumber\": \"+251-911-000-001\",\n  \"location0Id\": \"loc-000000000001\",\n  \"location0Name\": \"Ethiopia\",\n  \"location1Id\": \"loc-000000000002\",\n  \"location1Name\": \"Oromia\",\n  \"location2Id\": \"loc-000000000003\",\n  \"location2Name\": \"East Shewa\",\n  \"location3Id\": \"loc-000000000004\",\n  \"location3Name\": \"Bishoftu\",\n  \"location4Id\": \"loc-000000000005\",\n  \"location4Name\": \"Kebele 05\",\n  \"passwordExpiresOn\": \"2999-01-01T00:00:00Z\",\n  \"pinExpiresOn\": \"2999-01-01T00:00:00Z\",\n  \"createdBy\": \"\"\n}"
+        },
+        "url": {
+          "raw": "{{catalogue_url}}/user/v1/update/PASTE_USER_ID",
+          "host": [
+            "{{catalogue_url}}"
+          ],
+          "path": [
+            "user",
+            "v1",
+            "update",
+            "PASTE_USER_ID"
+          ]
+        },
+        "description": "Catalogue edit, which also syncs the profile to auth (auth_user_update); omitted password and pin are kept. Set passwordExpiresOn or pinExpiresOn to a past date to see Create Token or Create Token with PIN return 401 AUTH_CREDENTIAL_EXPIRED, then set it back."
+      }
+    },
+    {
+      "name": "Update User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "apikey",
+            "value": "{{api_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"PASTE_USER_ID\",\n  \"orgId\": \"org-000000000001\",\n  \"functionalRole\": \"MAKER\",\n  \"email\": \"test.user@example.com\",\n  \"firstName\": \"test\",\n  \"lastName\": \"user\",\n  \"orgName\": \"Ethiopian Institute of Agricultural Research\",\n  \"displayName\": \"FIELD_OFFICER\"\n}"
+        },
+        "url": {
+          "raw": "{{auth_url}}/auth/v1/auth_user_update",
+          "host": [
+            "{{auth_url}}"
+          ],
+          "path": [
+            "auth",
+            "v1",
+            "auth_user_update"
+          ]
+        },
+        "description": "The call the catalogue makes on an edit. Replaces: an omitted optional field is cleared. Never re-enables a revoked user."
       }
     },
     {
@@ -251,7 +478,7 @@
             "auth_user_revoke"
           ]
         },
-        "description": "Blocks the account. Create Token then returns 403 disabled. Takes the userId, not the email."
+        "description": "Blocks the account and removes its PIN devices. Create Token then returns 403 disabled, Create Token with PIN 401. Takes the userId, not the email."
       }
     },
     {
@@ -283,7 +510,32 @@
             "auth_user_create"
           ]
         },
-        "description": "The call the catalogue makes on publish. Idempotent, and the re-enable path after a revoke."
+        "description": "The call the catalogue makes on publish. Idempotent, and the re-enable path after a revoke. PIN devices are not restored: enrol again."
+      }
+    },
+    {
+      "name": "Toggle User",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "apikey",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{catalogue_url}}/user/v1/toggle/PASTE_USER_ID",
+          "host": [
+            "{{catalogue_url}}"
+          ],
+          "path": [
+            "user",
+            "v1",
+            "toggle",
+            "PASTE_USER_ID"
+          ]
+        },
+        "description": "Catalogue toggle, now synced to auth. First run deactivates (calls auth_user_revoke; Create Token then 401). Second run reactivates (calls auth_user_create)."
       }
     },
     {
@@ -340,7 +592,7 @@
             "PASTE_USER_ID"
           ]
         },
-        "description": "Removes the catalogue record, which every auth-side action above left untouched."
+        "description": "Soft-deletes the catalogue record. The catalogue calls auth_user_delete first, a no-op here after Delete User."
       }
     }
   ],
